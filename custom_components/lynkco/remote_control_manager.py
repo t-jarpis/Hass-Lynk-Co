@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import uuid
 
 import aiohttp
 from homeassistant.exceptions import HomeAssistantError
@@ -9,11 +10,11 @@ from .const import (
     DATA_IS_FORCE_UPDATE,
     DOMAIN,
 )
+from .http_client import REQUEST_TIMEOUT, get_session
 from .token_manager import get_ccc_token, get_user_id
 
 _LOGGER = logging.getLogger(__name__)
 
-REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=30)
 
 
 async def make_http_request(hass, url, data, vin):
@@ -38,24 +39,24 @@ async def make_http_request(hass, url, data, vin):
         "Accept-Encoding": "gzip, deflate, br",
         "Connection": "keep-alive",
         "userId": user_id,
-        "X-B3-TraceId": "2d3c260f81d6c8e9548d1ddd3db2d482",
+        "X-B3-TraceId": uuid.uuid4().hex,
         "Authorization": f"Bearer {ccc_token}",
     }
     try:
-        async with aiohttp.ClientSession(
-            connector=aiohttp.TCPConnector(ssl=False), timeout=REQUEST_TIMEOUT
-        ) as session:
-            async with session.post(url, headers=headers, json=data) as response:
-                body = await response.text()
-                if response.status == 200:
-                    _LOGGER.debug("Lynk backend accepted command: %s", body[:500])
-                    return True
-                _LOGGER.error(
-                    f"Failed to execute command, HTTP status: {response.status}, response: {body}"
-                )
-                raise HomeAssistantError(
-                    f"Lynk & Co rejected the command (HTTP {response.status})"
-                )
+        session = get_session(hass)
+        async with session.post(
+            url, headers=headers, json=data, timeout=REQUEST_TIMEOUT
+        ) as response:
+            body = await response.text()
+            if response.status == 200:
+                _LOGGER.debug("Lynk backend accepted command: %s", body[:500])
+                return True
+            _LOGGER.error(
+                f"Failed to execute command, HTTP status: {response.status}, response: {body}"
+            )
+            raise HomeAssistantError(
+                f"Lynk & Co rejected the command (HTTP {response.status})"
+            )
     except (aiohttp.ClientError, asyncio.TimeoutError) as err:
         reason = str(err) or type(err).__name__
         _LOGGER.error("Could not reach the Lynk backend: %s", reason)

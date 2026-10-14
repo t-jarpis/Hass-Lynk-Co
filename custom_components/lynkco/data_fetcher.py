@@ -1,6 +1,6 @@
-import aiohttp
 import logging
 
+from .http_client import REQUEST_TIMEOUT, get_session
 from .token_manager import get_ccc_token
 
 _LOGGER = logging.getLogger(__name__)
@@ -37,18 +37,16 @@ async def async_fetch_vehicle_data(hass, url):
     }
 
     try:
-        async with aiohttp.ClientSession(
-            connector=aiohttp.TCPConnector(ssl=False)
-        ) as session:
-            async with session.get(url, headers=headers) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    return data
-                else:
-                    _LOGGER.error(
-                        f"Failed to fetch vehicle data, HTTP status: {response.status}, response: {await response.text()}"
-                    )
-                    return None
+        session = get_session(hass)
+        async with session.get(
+            url, headers=headers, timeout=REQUEST_TIMEOUT
+        ) as response:
+            if response.status == 200:
+                return await response.json()
+            _LOGGER.error(
+                f"Failed to fetch vehicle data, HTTP status: {response.status}, response: {await response.text()}"
+            )
+            return None
     except Exception as error:
         _LOGGER.error("Exception occurred while fetching vehicle data: %s", str(error))
         return None
