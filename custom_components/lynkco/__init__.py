@@ -136,24 +136,25 @@ async def register_services(hass: HomeAssistant, entry: ConfigEntry):
         ).upper()
         duration_in_minutes = call.data.get("duration_in_minutes", 15)
 
+        # Only expect the new state once the backend accepted the command
+        await start_climate(hass, vin, climate_level, duration_in_minutes)
         await expected_state_monitor.expect_state(
             EXPECTED_STATE_CLIMATE_ON, hass, entry
         )
-        await start_climate(hass, vin, climate_level, duration_in_minutes)
 
     async def stop_climate_service(call):
+        await stop_climate(hass, vin)
         await expected_state_monitor.expect_state(
             EXPECTED_STATE_CLIMATE_OFF, hass, entry
         )
-        await stop_climate(hass, vin)
 
     async def lock_doors_service(call):
-        await expected_state_monitor.expect_state(EXPECTED_STATE_LOCKED, hass, entry)
         await lock_doors(hass, vin)
+        await expected_state_monitor.expect_state(EXPECTED_STATE_LOCKED, hass, entry)
 
     async def unlock_doors_service(call):
-        await expected_state_monitor.expect_state(EXPECTED_STATE_UNLOCKED, hass, entry)
         await unlock_doors(hass, vin)
+        await expected_state_monitor.expect_state(EXPECTED_STATE_UNLOCKED, hass, entry)
 
     async def start_flash_lights_service(call):
         await start_flash_lights(hass, vin)
@@ -174,14 +175,14 @@ async def register_services(hass: HomeAssistant, entry: ConfigEntry):
         await force_update_data(hass, entry)
 
     async def start_engine_service(call):
-        await expected_state_monitor.expect_state(EXPECTED_STATE_ENGINE_ON, hass, entry)
         await start_engine(hass, vin, call.data.get("duration_in_minutes", 15))
+        await expected_state_monitor.expect_state(EXPECTED_STATE_ENGINE_ON, hass, entry)
 
     async def stop_engine_service(call):
+        await stop_engine(hass, vin)
         await expected_state_monitor.expect_state(
             EXPECTED_STATE_ENGINE_OFF, hass, entry
         )
-        await stop_engine(hass, vin)
 
     # Common services registration
     hass.services.async_register(

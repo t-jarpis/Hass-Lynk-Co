@@ -1,20 +1,37 @@
+import asyncio
 import logging
+
+import aiohttp
+from homeassistant.exceptions import HomeAssistantError
 
 from .const import (
     COORDINATOR,
     DATA_IS_FORCE_UPDATE,
     DOMAIN,
 )
-import aiohttp
-
 from .token_manager import get_ccc_token, get_user_id
 
 _LOGGER = logging.getLogger(__name__)
 
+REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=30)
+
 
 async def make_http_request(hass, url, data, vin):
+    """Send a remote control command to the Lynk & Co backend.
+
+    Returns True when the backend accepted the command (HTTP 200).
+    Raises HomeAssistantError otherwise, so the failure is reported to the
+    caller of the service (UI, automation, REST API) instead of being silently
+    logged.
+    """
     ccc_token = await get_ccc_token(hass)
+    if not ccc_token:
+        raise HomeAssistantError(
+            "Could not get a valid Lynk & Co token. Try the refresh_tokens service or re-authenticate the integration."
+        )
     user_id = await get_user_id(hass, ccc_token, vin)
+    if not user_id:
+        raise HomeAssistantError("Could not determine the Lynk & Co user id for this vehicle.")
     headers = {
         "user-agent": "LynkCo/3016 CFNetwork/1492.0.1 Darwin/23.3.0",
         "accept": "application/json",
@@ -24,17 +41,27 @@ async def make_http_request(hass, url, data, vin):
         "X-B3-TraceId": "2d3c260f81d6c8e9548d1ddd3db2d482",
         "Authorization": f"Bearer {ccc_token}",
     }
-    async with aiohttp.ClientSession(
-        connector=aiohttp.TCPConnector(ssl=False)
-    ) as session:
-        async with session.post(url, headers=headers, json=data) as response:
-            if response.status == 200:
-                return True
-            else:
+    try:
+        async with aiohttp.ClientSession(
+            connector=aiohttp.TCPConnector(ssl=False), timeout=REQUEST_TIMEOUT
+        ) as session:
+            async with session.post(url, headers=headers, json=data) as response:
+                body = await response.text()
+                if response.status == 200:
+                    _LOGGER.debug("Lynk backend accepted command: %s", body[:500])
+                    return True
                 _LOGGER.error(
-                    f"Failed to execute command, HTTP status: {response.status}, response: {await response.text()}"
+                    f"Failed to execute command, HTTP status: {response.status}, response: {body}"
                 )
-                return False
+                raise HomeAssistantError(
+                    f"Lynk & Co rejected the command (HTTP {response.status})"
+                )
+    except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+        reason = str(err) or type(err).__name__
+        _LOGGER.error("Could not reach the Lynk backend: %s", reason)
+        raise HomeAssistantError(
+            f"Could not reach the Lynk & Co backend: {reason}"
+        ) from err
 
 
 async def start_climate(hass, vin, climate_level, duration_in_minutes):
