@@ -268,7 +268,8 @@ async def update_data(hass: HomeAssistant, entry: ConfigEntry):
 
     if not record:
         _LOGGER.error("Failed to fetch vehicle record data.")
-        return combined_data
+        # Raise so entities become unavailable instead of silently showing stale data.
+        raise UpdateFailed("Failed to fetch vehicle record data.")
     else:
         combined_data["vehicle_record"] = record
         if isinstance(record, dict):
@@ -279,22 +280,34 @@ async def update_data(hass: HomeAssistant, entry: ConfigEntry):
 
     if not shadow:
         _LOGGER.error("Failed to fetch vehicle shadow data.")
-        return combined_data
+        raise UpdateFailed("Failed to fetch vehicle shadow data.")
     else:
         combined_data["vehicle_shadow"] = shadow
 
     address_raw = "Unavailable"
     if latitude is not None and longitude is not None:
-        address_response = await async_fetch_vehicle_address_data(
-            hass, latitude, longitude
-        )
-        address = parse_address(address_response)
-        if (
-            isinstance(address_response, dict)
-            and "addressComponents" in address_response
-        ):
-            address_data = address_response["addressComponents"]
-            address_raw = ", ".join(component["longName"] for component in address_data)
+        # A parked car does not move: reuse the last address for the same
+        # position (~10 m) instead of calling the geocoder on every update.
+        cache_key = (round(float(latitude), 4), round(float(longitude), 4))
+        entry_data = hass.data[DOMAIN][entry.entry_id]
+        cached = entry_data.get("address_cache")
+        if cached and cached[0] == cache_key:
+            address, address_raw = cached[1], cached[2]
+        else:
+            address_response = await async_fetch_vehicle_address_data(
+                hass, latitude, longitude
+            )
+            address = parse_address(address_response)
+            if (
+                isinstance(address_response, dict)
+                and "addressComponents" in address_response
+            ):
+                address_data = address_response["addressComponents"]
+                address_raw = ", ".join(
+                    component["longName"] for component in address_data
+                )
+            if address_response:
+                entry_data["address_cache"] = (cache_key, address, address_raw)
     else:
         address = "Unavailable"
         _LOGGER.error("Latitude or longitude not available for address lookup.")
